@@ -1,0 +1,1428 @@
+---
+title: "QAQC_BAM_Checks_Report"
+author: "Chafika Phiri"
+date:  "2025-07-03"
+format: pdf
+fig-cap-location: bottom
+tbl-cap-location: top
+table-numbering: true
+execute:
+  warning: false
+  message: false
+editor_options: visual
+---
+
+# **Data Provenance Description:**
+
+This script processes Quality Assurance (QA) and Quality Control (QC) on raw data from the *Baobabs in Africa Mapped (BAM) Project* (<https://opals-exeter.org/bam/>) to ensure it is clean, accurate, and suitable for further analysis. The script performs a series of cleaning and validation steps, with clearly defined rules applied throughout the processes. The dataset was collected across multiple African countries through field surveys using the mobile applications called KoboCollect and QField.
+
+```{r, echo = FALSE}
+
+#| label: Setup
+
+targets::tar_load(raw_input_files)
+
+# Load the required packages
+
+library(tidyverse)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(knitr)
+library(writexl)
+library(tools)
+library(janitor)
+library(WorldFlora)
+library(fuzzyjoin)
+
+```
+
+Load the excel file - this excel file contains the latest additions from koboCollect, which we will use to create a new combined file for all the data collected from KoboCollect. We will then export this new file and use it for the QAQC checks. You need to manually edit the Kobocollect to add email adresses. N.B: Whenever there are new additions from KoboCollect, we will need to repeat this process to create a new combined file for all the data collected from KoboCollect, and then use the new file for the QAQC checks.
+
+```{r}
+
+#| label: KoboCollect_dataset
+#| warning: false
+#| message: false
+#| include: false
+
+# Load Kobo_BAM data from koboCollect, to remove the questions on the column names. Then export the Excel file into the group folder.
+
+bam_kobo_data <- readxl::read_excel(
+  "Data/raw/BAM_Data_from_Kobo.xlsx")
+
+# Inspect column names
+
+#colnames(bam_kobo_data)
+
+# Rename column names
+
+bam_kobo_data <- bam_kobo_data |>
+  rename(
+    "Start_date_time" = `start`,
+    "End_date_time" = `end`,
+    "Date" = `today`,
+    "Tree_id" = `Unique ID`,
+    "Full_Name" = `Full Name`,
+    "Name_Publicly_Visible" = `Name publicly visible?`,
+    "Baobab_Latitude" = `_Location of baobab tree_latitude`,
+    "Baobab_Longitude" = `_Location of baobab tree_longitude`,
+    "Baobab_Altitude" = `_Location of baobab tree_altitude`,
+    "Multiple_Stems_Baobab" = `Does the baobab tree have two or more stems below 1.3 meters (breast height)?...15`,
+    "Baobab_DBH_Stem_One" = `Baobab girth [in cm] at breast height (1.3 m above ground)...16`,
+    "Baobab_DBH_Stem_Two" = `Second baobab girth [in cm] at breast height (1.3 m above ground)`,
+    "Tendered_by_humans" = `Are there indications that the baobab tree has been planted, watered or tendered by humans?`,
+    "Leaves_on_Baobab" = `Are there any leaves on the baobab tree?`,
+    "Flowers_on_Baobab" = `Are there any flowers on the baobab tree?`,
+    "Fruit_on_Baobab" = `Is there fruit on the baobab tree?`,
+    "Elephant_damage" = `Signs of elephant damage on baobab, less than 5 years?`,
+    "Bark_harvesting_by_humans" = `Signs of baobab bark harvesting by humans in the last 5 years?`,
+    "Black_mould" = `Signs of black mould growth on the baobab?`,
+    "Leaf_harvesting_by_humans" = `Signs of baobab leaf harvesting by humans in the last 5 years?`,
+    "NS_Baobab" = `Baobab crown width (m)...26`,
+    "EW_Baobab" = `Baobab crown width (m)...27`,
+    "Baobab_Height" = `Baobab height (m)`,
+    "Instrument" = `Add details on which method or instrument used for height measurement`,
+    "Photos_whole_stem_baobab" = `Photographs of baobab....30`,
+    "Photos_of_damaged_baobab" = `Photographs of baobab tree (damaged areas)`,
+    "Optional_Photos_baobab" = `Optional additional photographs of baobab.`,
+    "Comments_on_baobab" = `Comments...36`,
+    "Non_baobab_Latitude" = `_Location of a Non-baobab tree_latitude`,
+    "Non_baobab_Longitude" = `_Location of a Non-baobab tree_longitude`,
+    "Non_baobab_Altitude" = `_Location of a Non-baobab tree_altitude`,
+    "Multiple_Stems_non_baobab" = `Does the non-baobab tree have two or more stems below 1.3 meters (breast height)?...42`,
+    "Non_baobab_DBH_Stem_One" = `Non-baobab tree girth [in cm] at breast height (1.3 m above ground)`,
+    "Non_baobab_DBH_Stem_Two" = `Second non-baobab girth at breast height in [cm] at breast height (1.3 m above ground)`,
+    "NS_Non_baobab" = `Non-baobab crown width (m)`,
+    "EW_Non_baobab" = `Non-baobab tree crown width (m)`,
+    "Non_baobab_height" = `Non-baobab tree height`,
+    "Species_name" = `Indicate species name for non-baobab tree if known`,
+    "Photographs_non_baobab" = `Photographs of Non-baobab tree...49`,
+    "Comments_on_non_baobab" = `Comments...51`,
+    "Setting" = `Setting of both Baobab and Non-baobab tree`,
+    ) 
+
+# Select the new columns and create a new dataframe for non baobab and 
+# baobab data.
+
+# Baobab dataframe
+
+Kobo_baobab <- bam_kobo_data |> 
+  select(
+    Date, Tree_id, Email, Full_Name,
+    Name_Publicly_Visible, Baobab_Latitude, Baobab_Longitude, Baobab_Altitude,
+    Multiple_Stems_Baobab, Baobab_DBH_Stem_One, Baobab_DBH_Stem_Two,
+    Tendered_by_humans, Leaves_on_Baobab, Flowers_on_Baobab, Fruit_on_Baobab,
+    Elephant_damage, Bark_harvesting_by_humans, Black_mould,
+    Leaf_harvesting_by_humans, NS_Baobab, EW_Baobab, Baobab_Height, Instrument,
+    Photos_whole_stem_baobab, Photos_of_damaged_baobab, Optional_Photos_baobab,
+    Comments_on_baobab, Setting
+    )
+
+# Non_baobab dataframe
+
+Kobo_non_baobab <- bam_kobo_data |> 
+  select(
+    Date, Tree_id, Email, Full_Name,
+    Name_Publicly_Visible, Non_baobab_Latitude,
+    Non_baobab_Longitude, Non_baobab_Altitude,
+    Multiple_Stems_non_baobab, Non_baobab_DBH_Stem_One,
+    Non_baobab_DBH_Stem_Two, Instrument,
+    NS_Non_baobab, EW_Non_baobab, Non_baobab_height, Species_name,
+    Photographs_non_baobab, Comments_on_non_baobab, Setting
+    )
+
+# Add a tree_type column to the dataframes
+
+Kobo_baobab$Tree_type <- "Baobab"
+Kobo_non_baobab$Tree_type <- "Non-Baobab"
+
+# Rename the shareable column names for consistency in the dataframes
+
+Renamed_Kobo_baobab <- Kobo_baobab |> 
+  rename(
+    "Latitude" = Baobab_Latitude, 
+    "Longitude" = Baobab_Longitude, 
+    "Altitude" = Baobab_Altitude,
+    "Multiple_Stems" = Multiple_Stems_Baobab, 
+    "Stem_one_dbh" = Baobab_DBH_Stem_One, 
+    "Stem_two_dbh" = Baobab_DBH_Stem_Two,
+    "Height" = Baobab_Height,
+    "Crown_width_NS" = NS_Baobab, 
+    "Crown_width_EW" = EW_Baobab,
+    "Whole_tree_photo" = Photos_whole_stem_baobab, 
+    "Comments" = Comments_on_baobab
+    )
+
+Renamed_kobo_non_baobab <- Kobo_non_baobab |> 
+  rename(
+    "Latitude" = Non_baobab_Latitude, 
+    "Longitude" = Non_baobab_Longitude, 
+    "Altitude" = Non_baobab_Altitude,
+    "Multiple_Stems" = Multiple_Stems_non_baobab, 
+    "Stem_one_dbh" = Non_baobab_DBH_Stem_One, 
+    "Stem_two_dbh" = Non_baobab_DBH_Stem_Two,
+    "Height" = Non_baobab_height,
+    "Crown_width_NS" = NS_Non_baobab, 
+    "Crown_width_EW" = EW_Non_baobab,
+    "Whole_tree_photo" = Photographs_non_baobab, 
+    "Comments" = Comments_on_non_baobab, 
+  )
+
+# Combine the baobab and non-baobab data frames using rows
+
+combined_kobo_data <- dplyr::bind_rows(
+  Renamed_Kobo_baobab,Renamed_kobo_non_baobab)
+
+# Export the new excel file
+
+writexl::write_xlsx(combined_kobo_data, 
+                    "Data/raw/New_combined_kobo_data.xlsx", 
+                    col_names = TRUE, format_headers = TRUE)
+
+```
+
+Load map of Africa boundaries and prepare for QAQC checks
+
+```{r, echo=FALSE}
+
+#| label: Map-of-Africa
+
+# Loading the map of Africa, which we shall use for checking the coordinates, 
+# if they fall within the continent of Africa.
+
+# Get the Africa map
+
+africa_one <- ne_countries(continent = "Africa", returnclass = "sf")
+
+# Convert the CRS to match the data frames.
+
+sf_use_s2(FALSE)
+
+africa <- ne_countries(continent = "Africa", returnclass = "sf") |> 
+  st_union() |> 
+  st_as_sf()
+```
+
+This part loads all excel files from kobocollect and other sources and prepare for QAQC checks
+
+Manually verify the files so that they have information that is consistent with the KoboCollect data. Then combine all the files into one file.
+
+```{r, results = 'asis', echo = FALSE}
+
+# Load all the excel files in the data folder into R, and rename the column 
+# names so that they correspond with the other files exported from QField. 
+# Then combine all the files into one file.
+
+bam_kobo_data <- readxl::read_excel(
+  "Data/Excel_Files/combined_kobo_data.xlsx")
+Lena <- readxl::read_excel(
+  "Data/Excel_Files/Adansonia digitata_Togo_cleaned_coordinates.xlsx")
+kremetart_data <- readxl::read_excel(
+  "Data/Excel_Files/Kremetart_Data.xlsx" )
+maps_data <- readxl::read_excel(
+  "Data/Excel_Files/Mapungubwe_Data.xlsx")
+big_baobab_data <- readxl::read_excel(
+  "Data/Excel_Files/Big Tree Data from Kobo.xlsx")
+venda_data <- readxl::read_excel(
+  "Data/Excel_Files/Venda Data for Chafika V1.xlsx")
+
+# getting a list of excel files from a named folder
+
+#list_of_excel_files <- list.files(path = "Data/Excel_Files", 
+#full.names = TRUE)
+
+#read_excel_file <- function(file){
+ # if(is.na(file)) stop("No file path")
+ # df <- readxl::read_excel(file)
+ # df
+#}
+#list_of_excel_files
+# select file number 2 (kobocollect data)
+#bam_data <- list_of_excel_files[[2]]
+
+# Read the excel file
+#bam_kobo_data <- readxl::read_excel(bam_kobo_data)
+
+#maps <- list_of_excel_files[[4]]
+
+#maps <- readxl::read_excel(maps)
+
+#dplyr::glimpse(bam_data)
+
+# Loop to read all the files
+
+#bam_list <- purrr::map(.x = list_of_excel_files, .f = read_excel_file)
+
+# Clean names and inspect the first few rows
+#bam_list_cleaned <- map(bam_list, function(df) {
+#  df |> 
+#    janitor::clean_names()    # Convert names like "Date&Time" to 
+# "date_time"
+#  })
+
+# Rename for shareable column names for consistency
+
+rename_map <- c(
+  "Date"                        = "Date&Time",
+  "Tree_id"                     = "Tree_id",
+  "Email"                       = "Email",
+  "Full_Name"                   = "Name",
+  "Name_Publicly_Visible"       = "Publicly",
+  "Longitude"                   = "Latitude",
+  "Latitude"                    = "Longitude",
+  "Altitude"                    = "Altitude",
+  "Multiple_Stems"              = "Two_stems",
+  "Stem_one_dbh"                = "Stem_one",
+  "Stem_two_dbh"                = "Stem_two",
+  "Tendered_by_humans"          = "Planted_T",
+  "Leaves_on_Baobab"            = "Leaves_on",
+  "Flowers_on_Baobab"           = "Flowers_on",
+  "Fruit_on_Baobab"             = "Fruit_on",
+  "Elephant_damage"             = "Elephant_D",
+  "Bark_harvesting_by_humans"   = "Bark_Har",
+  "Leaf_harvesting_by_humans"   = "Leaf_Harv",
+  "Black_mould"                 = "Mould_Grow",
+  "Crown_width_NS"              = "NS_Widith",
+  "Crown_width_EW"             = "EW_Widith",
+  "Height"                      = "Height",
+  "Whole_tree_photo"            = "Photo_1",
+  "Photos_of_damaged_baobab"    = "Photo_2",
+  "Species_name"                = "Species_N",
+  "Comments"                    = "Comments",
+  "Setting"                     = "Setting"
+  )
+
+
+# Apply renaming to the data frames
+
+kremetart_data <- rename(kremetart_data, !!!rename_map)
+maps_data <- rename(maps_data, !!!rename_map)
+lena_data <- rename(Lena, !!!rename_map)
+
+# Change the values in the multi_stem column to characters for consistency
+
+kremetart_data$Multiple_Stems <- as.character(kremetart_data$Multiple_Stems)
+maps_data$Multiple_Stems <- as.character(maps_data$Multiple_Stems)
+bam_kobo_data$Multiple_Stems <- as.character(bam_kobo_data$Multiple_Stems)
+lena_data$Multiple_Stems <- as.character(lena_data$Multiple_Stems)
+
+
+# Convert all Date columns to POSIXct for consistency
+
+kremetart_data$Date <- as.POSIXct(kremetart_data$Date, tz = "UTC")
+maps_data$Date <- as.POSIXct(maps_data$Date, tz = "UTC")
+bam_kobo_data$Date <- as.POSIXct(bam_kobo_data$Date, tz = "UTC")
+lena_data$Date <- as.POSIXct(lena_data$Date, tz = "UTC")
+big_baobab_data$Date <- as.POSIXct(big_baobab_data$Date, tz = "UTC")
+venda_data$Date <- as.POSIXct(venda_data$Date, tz = "UTC")
+
+# Now combine all the data frames into one file.
+
+#combined_data <- dplyr::bind_rows(kremetart_data, maps_data, bam_kobo_data, 
+ #                                 lena_data, big_baobab_data, venda_data)
+
+cols_to_numeric <- c(
+  "Crown_width_NS",
+  "Crown_width_EW",
+  "Height",
+  "Stem_one_dbh",
+  "Stem_two_dbh",
+  "Altitude",
+  "Latitude",
+  "Longitude"
+)
+
+convert_numeric <- function(df) {
+
+  existing_cols <- intersect(cols_to_numeric, names(df))
+
+  df[existing_cols] <- lapply(df[existing_cols], as.numeric)
+
+  df
+}
+
+kremetart_data  <- convert_numeric(kremetart_data)
+maps_data       <- convert_numeric(maps_data)
+bam_kobo_data   <- convert_numeric(bam_kobo_data)
+lena_data       <- convert_numeric(lena_data)
+big_baobab_data <- convert_numeric(big_baobab_data)
+venda_data      <- convert_numeric(venda_data)
+
+combined_data <- dplyr::bind_rows(
+  kremetart_data,
+  maps_data,
+  bam_kobo_data,
+  lena_data,
+  big_baobab_data,
+  venda_data
+)
+
+#view(combined_data)
+
+# Clean the Full the name column by removing \r and \n and trim the white spaces
+
+#combined_data$Full_Name <- trimws(gsub("[\r\n]", "", combined_data$Full_Name))
+
+# Select Unique names of our contributors
+
+#contributors_list <- unique(combined_data$Full_Name)
+
+# Print contributors names
+
+#cat("The contributors of the dataset include:\n\n")
+
+#cat(paste(contributors_list, collapse = ", "))
+
+```
+
+Check for any duplicates in the latitude and logitude columns
+
+```{r}
+
+#| label: Duplicates-check
+#| warning: false
+#| message: false
+#| include: false
+#| eval: false
+#| echo: false
+#| results: 'asis'
+
+# Check for duplicates in the latitude and longitude columns
+
+duplicates <- combined_data |> 
+  group_by(Latitude, Longitude) |> 
+  filter(n() > 1) |> 
+  ungroup()
+
+# duplicated() flags rows that are exact copies of an earlier row
+# sum() counts how many duplicates were found
+n_dups <- sum(duplicated(duplicates[, c("Longitude", "Latitude")]))
+cat("Number of duplicate points:", n_dups, "\n")
+
+# distinct() from dplyr keeps only unique longitude/latitude combinations
+# .keep_all = TRUE keeps all other columns 
+coords_clean <- distinct(duplicates, Longitude, Latitude, .keep_all = TRUE)
+
+cat("Points before deduplication:", nrow(duplicates),       "\n")
+cat("Points after deduplication: ", nrow(coords_clean), "\n")
+
+# Remove duplicates from the full dataset based on Latitude & Longitude
+
+combined_data_clean <- combined_data |> 
+  distinct(Longitude, Latitude, .keep_all = TRUE)
+
+# Check how many rows you have now
+
+#nrow(combined_data_clean)
+
+```
+
+1.0 We first need to develop the rules for our QAQC process, run the checks, and flagging errors.
+
+-   **Full name:** (a) Check if the field is not blank, (b) Flag "ERROR: Name Missing" if the field is blank, (c) Check if there is an error in the full name, (d) Flag "WARNING: Wrong Name" if there is an error in the full name, (e) update the name or contact the data contributor.
+
+-   **Publicly visible data:** (a) Change from "yes" or "No" to "True" or "False", (b) Any record that has "NA" or empty, Flag "ERROR: Missing Publicly Visible Data", (c) Contact the data contributor.
+
+-   **Location of the tree:** (a) Check if the field is blank (NA), (b) Flag "ERROR: Missing Location" if the field is blank (NA), (c) Check the minimum decimal places of three for both latitude and longitude, (d) Flag "WARNING: Fewer than three decimal places" if the coordinates are not precise, (e) Check if coordinates lies in the continent of Africa and its islands, using Africa shape file, (f) Flag "ERROR: Coordinates outside Africa" if the coordinates are outside Africa boundaries and its islands.
+
+-   **Altitude:** (a) Check altitude range; Is the number between the lowest point (-155 m) and highest (5,895 m), (b) Flag "ERROR: Implausibly Low Altitude", if Altitude less than -155 m, (c) Flag "WARNING: Unusually high elevation for baobabs", if Altitude greater than 2500 m, (d) Flag "WARNING: Implausibly high altitude", if Altitude greater than 5895 m.
+
+-   **Crown width (North_South):** (a) Change "North_South" wording to (NS), (b) Check for missing values (NA), (c) Flag "ERROR: Missing NS Width", if there are missing values (NA), (d) Check the range of NS values: is the number between 0.01 m to 47 m, (e) Flag "ERROR: Excessive NS width", if NS Width greater than 47 m, (f) Flag "ERROR: Small NS width", if NS_width less than 0.01 m.
+
+-   **Crown width (East_West):** (a) Change "East_West" wording to (EW), (b) Check for missing values (NA), (c) Flag "ERROR: missing NS width", if there are missing values (NA), (d) Check the range of EW values: is the number between 0.01 m to 47 m, (e) Flag "ERROR: Excessive NS width", if EW width greater than 47 m, (f) Flag "ERROR: Small EW width", if EW_width less than 0.01 m.
+
+-   **Does the tree have multiple stems?** (a) If "no" value, there should only be one circumference measurement. (b) If "yes" value, there should be a second circumference. (c) Check and flag "ERROR: Single stem tree with multiple measurements", if the value is "no" and the second stem column has a value. (d) Check and flag "ERROR: Missing second circumference for multistem tree", if the value is "yes" and the second stem column has no entry.
+
+-   **Circumference check stem_one:** (a) Check for missing values (NA), (b) Flag "WARNING: Missing Stem1 dbh", if there are missing values (NA), (c) Check the range of dbh values: is the number between 0.1 to 4700 cm, (d) Flag "ERROR: Exceeds maximum circumference", if stem1 greater than 4700 cm, (e) Flag "ERROR: Invalid circumference", if stem1 less than or equal to 0.1 cm.
+
+-   **Circumference check stem_two:** (a) Check for missing values (NA), (b) Flag "WARNING: Missing stem2 dbh", if there are missing values (NA), (c) Check the range of dbh values: is the number between 0.01 to 4700 cm, (d) Flag "ERROR: Exceeds maximum circumference", if stem2 greater than 4700 cm, (e) Flag "ERROR: Invalid circumference", if stem2 less or equal to 0.01 cm.
+
+-   **Height check:** (a) Check for missing values (NA), (b) Flag "WARNING: Height measurement missing", if there are missing values (NA), (d) Check the range of height values: is the number between 0.1 to 30 m, (e) Flag "ERROR: Exceeds maximum height", if the value is greater than 30 m, (f) Flag "ERROR: Invalid circumference", if the value is less or equal to 0.1 m.
+
+-   **Elephant damage check:** Check for any elephant damage reports from Madagascar and issue a warning if found, "WARNING: Elephant damage reported from Madagascar".
+
+-   **Species name check:** check for incorrect spellings, and wrong species name: Flag "ERROR: Species name incorrect".
+
+    **QAQC Steps**
+
+-   Step 1: Full-Name Checks and Flagging Errors or Warning on incomplete names, characters that are NOT letters, spaces, or hyphens.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Full-Name-Check
+
+# Check and flag missing or wrong names
+
+bam_data <- combined_data_clean |>
+  mutate(
+    # Clean name: remove numbers and related characters (e.g., '7.5' or '3rd')
+    cleaned_name = str_trim(str_remove_all(Full_Name, "\\b\\d+(\\.\\d+)?\\b|\\d+")),
+    
+    full_name = case_when(
+      is.na(cleaned_name) | cleaned_name == "" ~ "ERROR: Name missing",
+      str_detect(cleaned_name, "[0-9]|[^a-zA-Z\\s-]") |
+        str_count(cleaned_name, "\\s+") < 1 ~ "WARNING: Wrong name",
+      TRUE ~ cleaned_name
+    )
+  )
+
+# View the Errors and Warnings
+
+Name_qaqc <- bam_data |> 
+  filter(full_name %in% c("ERROR: Name missing", "WARNING: Wrong name")) |>
+  select(Full_Name, Email, full_name)
+
+if (nrow(Name_qaqc) > 0) {
+  knitr::kable(Name_qaqc, "pipe", 
+               caption = "This table presents cases in which full name checks produce incorrect results.")
+} else {
+  cat("Check complete: No errors or warnings found in the full name check.\n")
+}
+
+```
+
+-   Step 2: Check all publicly visible data and flag any detected errors or warnings.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Publicly-visible-data
+
+# Check for the missing information, and change "yes" or "no" to "true" 
+# or "false"
+
+bam_data <- bam_data |>
+  mutate(
+    name_publicly_visible = case_when(
+      is.na(Name_Publicly_Visible) | 
+        str_trim(Name_Publicly_Visible) == 
+        "" ~ "ERROR: Missing publicly visible data",
+      str_to_lower(str_trim(Name_Publicly_Visible)) == "yes" ~ "TRUE",
+      str_to_lower(str_trim(Name_Publicly_Visible)) == "no" ~ "FALSE",
+      TRUE ~ "ERROR: Missing publicly visible data"
+    )
+  )
+
+# View the Errors and Warnings
+
+Name_Visible_qaqc <- bam_data |> 
+  filter(name_publicly_visible %in% c(
+    "ERROR: Missing publicly visible data", 
+    "ERROR: Missing publicly visible data")) |>
+  select(Tree_id, Email, Name_Publicly_Visible, name_publicly_visible)
+
+#knitr::kable(Name_Visible_qaqc)
+
+# Checking if there are any rows to display
+
+if (nrow(Name_Visible_qaqc) > 0) {
+  knitr::kable(Name_Visible_qaqc, "pipe", caption = "This table presents cases in which the answer to the publicly visible question checks produce incorrect results.")
+}else {
+  cat("Check complete: No errors or warnings found in the name publicly visible check.\n")
+}
+
+```
+
+-   Step 3: Perform the location check using both the tree's longitude coordinates.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Longitude-check
+#| warning: false
+
+# Check for missing values in Longitude Columns 
+# (if the field is blank (NA))
+
+# Convert both longitude and latitude to character first to avoid errors
+
+bam_data <- bam_data |> 
+  mutate(
+    Latitude = as.character(Latitude),
+    Longitude = as.character(Longitude)
+  )
+
+# Apply longitude QAQC Checks
+
+bam_data <- bam_data |> 
+  mutate(
+    longitude = case_when(
+      is.na(Longitude) | str_trim(Longitude) == "" 
+      ~ "ERROR: Missing location",
+      str_count(str_split_fixed(Longitude, "\\.", 2)[, 2]) < 3 
+      ~ "WARNING: Fewer than five decimal places",
+      TRUE ~ Longitude
+    )
+  )
+
+# View the Errors and Warnings
+
+Location_qaqc <- bam_data |> 
+  filter(longitude %in% c("ERROR: Missing location", 
+                          "WARNING: Fewer than five decimal places")) |>
+  select(Tree_id, Email, Longitude, longitude) |>
+  distinct(Longitude, .keep_all = TRUE)
+
+#knitr::kable(Location_qaqc)
+
+# Checking if there are any rows to display 
+
+if (nrow(Location_qaqc) > 0) {
+  knitr::kable(Location_qaqc, "pipe", 
+               caption = "This table flags instances in which coordinates (longitude) checks produce incorrect results.")
+}else {
+  cat("Check complete: No errors or warnings found in the coordinates check.\n")
+}
+
+```
+
+-   Step 4: Perform the location check using both the tree's latitude.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: latitude-check
+
+# Apply latitude QAQC Checks
+
+bam_data <- bam_data |> 
+  mutate(
+    latitude = case_when(
+      is.na(Latitude) | str_trim(Latitude) == "" ~ "ERROR: Missing location",
+      str_count(str_split_fixed(Latitude, "\\.", 2)[, 2]) < 3 
+      ~ "WARNING: Fewer than five decimal places",
+      TRUE ~ Latitude
+    )
+  )
+
+# View the Errors and Warnings
+
+Location_qaqc <- bam_data |> 
+  filter(latitude  %in% c("ERROR: Missing Location", 
+                              "WARNING: Fewer than five decimal places")) |>
+  select(Tree_id, Email, Latitude, latitude) |>
+  distinct(Latitude, .keep_all = TRUE)
+
+#knitr::kable(Location_qaqc_qaqc)
+
+# Checking if there are any rows to display with errors or warnings 
+
+if (nrow(Location_qaqc) > 0) {
+  knitr::kable(Location_qaqc, "pipe", 
+               caption = "This table flags instances in which coordinates (latitude) checks produce incorrect results.")
+}else {
+  cat("Check complete: No errors or warnings found in the coordinates check.\n")
+}
+```
+
+-   Step 5: Perform a spatial check to confirm coordinates fall within the African continent or its islands.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Spatial-check
+
+# Convert the latitude and longitude data to sf object
+
+bam_points <- bam_data |> 
+  filter(!is.na(Latitude) & !is.na(Longitude)) |> 
+  mutate(
+    Latitude = as.numeric(Latitude),
+    Longitude = as.numeric(Longitude)
+  ) |> 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+# Perform spatial check for points within Africa
+
+inside_africa <- st_within(bam_points, africa, sparse = FALSE)[, 1]
+
+# Add error message for points outside Africa
+
+bam_data_flagged <- bam_data |> 
+  mutate(
+    Latitude = as.numeric(Latitude),
+    Longitude = as.numeric(Longitude)
+  ) |> 
+  mutate(
+    Error_Flag = if_else(!inside_africa, "ERROR: Coordinates Outside Africa",
+                         NA))
+
+# View coordinates outside and the flagged errors
+
+qaqc_issues <- bam_data_flagged |> 
+  filter(Error_Flag %in% c("ERROR: Coordinates Outside Africa")) |> 
+  select(Tree_id, Email, Longitude, Latitude, Error_Flag)
+
+#knitr::kable(qaqc_issues)
+
+# Checking if there are any rows to display 
+
+if (nrow(qaqc_issues) > 0) {
+  knitr::kable(qaqc_issues, "pipe", 
+               caption = "This table flags instances in which spatial checks produce incorrect results.")
+}else {
+  cat("Check complete: No errors or warnings found in the spatial check.\n")
+}
+
+```
+
+-   Step 6: Conduct QAQC validation for altitude data.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: altitude-checks
+
+# Baobab_Altitude checks
+
+bam_data <- bam_data |> 
+  dplyr::mutate(
+    altitude = case_when(
+      is.na(Altitude) ~ NA_character_,
+      Altitude < -155 ~ "ERROR: Implausibly low altitude",
+      Altitude > 5895 ~ "ERROR: Implausibly high altitude",
+      Altitude > 2500 ~ "WARNING: Unusually high elevation for baobabs",
+      TRUE ~ as.character(Altitude)
+    )
+  )
+
+# View the Errors and Warnings
+
+Altitude_QAQC <- bam_data |>
+  filter(altitude %in% 
+           c("ERROR: Implausibly low altitude", 
+             "ERROR: Implausibly high altitude", 
+             "WARNING: Unusually high elevation for baobabs")) |>
+  select(Tree_id, Email, Altitude, altitude)
+
+#knitr::kable(Altitude_QAQC)
+
+# Check if there are any rows to display
+
+if (nrow(Altitude_QAQC) > 0) {
+  knitr::kable(Altitude_QAQC, "pipe", caption = "This table flags instances in which altitude checks produce incorrect results.")
+}else {
+  cat("Check complete: No errors or warnings found in the altitudel check.\n")
+}
+
+```
+
+-   Step 7: Perform a QAQC check on Crown Width (North–South).
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: NS-width-check
+
+# Crown Width (North-South) checks
+
+bam_data <- bam_data |> 
+  mutate(
+    ns_crown_width = case_when(
+      is.na(Crown_width_NS) ~ "ERROR: Missing NS Width",
+      Crown_width_NS > 47 ~ "ERROR: Excessive NS Width",
+      Crown_width_NS <= 0.01 ~ "ERROR: Small NS Width",
+      TRUE ~ as.character(Crown_width_NS)
+    )
+  )
+
+# view the Errors and Warnings
+
+NS_crown_QAQC <- bam_data |> 
+    filter(ns_crown_width %in% 
+             c("ERROR: Missing NS Width", "ERROR: Excessive NS Width", 
+               "ERROR: Small NS Width")) |>
+  select(Tree_id, Email, Crown_width_NS, ns_crown_width)
+
+#knitr::kable(NS_crown_QAQC)
+
+# Check if there are any rows to display
+
+if (nrow(NS_crown_QAQC) > 0) {
+  knitr::kable(NS_crown_QAQC, "pipe", caption = "This table flags instances in which North-South Width checks produce incorrect results.")
+}else {
+  cat("Check complete: No errors or warnings found in the north to south crown width check.\n")
+}
+
+```
+
+-   Step 8: Perform a QAQC check on Crown Width (East-West).
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Baobab-ew-width
+
+# Crown Width (East-West) checks
+
+bam_data <- bam_data |> 
+  mutate(
+    ew_crown_width = case_when(
+      is.na(Crown_width_EW) ~ "ERROR: Missing EW Width",
+      Crown_width_EW > 47 ~ "ERROR: Excessive EW Width",
+      Crown_width_EW <= 0.01 ~ "ERROR: Small EW Width",
+      TRUE ~ as.character(Crown_width_EW)
+    )
+  )
+
+# View the Errors and Warnings
+
+EW_crown_QAQC <- bam_data |>
+  filter(ew_crown_width %in% 
+           c("ERROR: Missing EW Width", "ERROR: Excessive EW Width", 
+             "ERROR: Small EW Width")) |>
+  select(Tree_id, Email, Crown_width_EW, ew_crown_width)
+
+#knitr::kable(EW_crown_QAQC)
+
+# Check if there are any rows to display
+
+if (nrow(EW_crown_QAQC) > 0) {
+  knitr::kable(EW_crown_QAQC, "pipe", caption = "This table flags instances in which East-West width checks produce incorrect results.")
+}else {
+  cat("Check complete: No errors or warnings found in the east to west crown width check.\n")
+}
+
+```
+
+-   Step 9: Conduct a QAQC check on whether the has multiple stems information.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Multiple-stems-check
+
+# Does the tree have multiple stems?
+
+bam_data <- bam_data |> 
+  mutate(
+    multi_stem = case_when(
+      Multiple_Stems == "No" & !is.na(Stem_two_dbh) 
+      ~ "ERROR: Baobab Single Stem Tree with Multiple Measurements",
+      Multiple_Stems == "Yes" & is.na(Stem_two_dbh) 
+      ~ "ERROR: Missing Second Circumference for Multistem Baobab Tree",
+      TRUE ~ as.character(Multiple_Stems)
+    )
+  )
+
+# View the Errors and Warnings
+
+multistem_QAQC <- bam_data |> 
+  filter(multi_stem %in% 
+             c("ERROR: Single Stem Tree with Multiple Measurements", 
+               "ERROR: Missing Second Circumference for Multistem Tree"
+               )) |>
+  select(Tree_id, Email, Multiple_Stems, Stem_one_dbh, 
+         Stem_two_dbh, multi_stem)
+
+#knitr::kable(multistem_QAQC)
+
+# Check if there are any rows to display
+
+if (nrow(multistem_QAQC) > 0) {
+  knitr::kable(multistem_QAQC, "pipe", caption = "This table flags instances in which multi-stem checks produce incorrect results.")
+}else {
+  cat("Check Complete: No errors or warnings found in the multi-stem check.\n")
+}
+
+```
+
+-   Step 10: Perform a QAQC check on the Stem One circumference measurement.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Stem-one-check
+
+# Circumference check for Stem one
+
+bam_data <- bam_data |> 
+  mutate(
+    stem_one_cir = case_when(
+      is.na(Stem_one_dbh) | Stem_one_dbh == "" ~ "WARNING: Missing Stem1 dbh",
+      Stem_one_dbh > 4700 ~ "ERROR: Exceeds Maximum Circumference",
+      Stem_one_dbh <= 0.01 ~ "ERROR: Invalid Circumference",
+      TRUE ~ as.character(Stem_one_dbh)
+    )
+  )
+
+# View the Errors and Warning
+
+Stem1_QAQC_Issues <- bam_data |> 
+  filter(stem_one_cir %in% c("ERROR: Exceeds Maximum Circumference", 
+                           "WARNING: Missing Stem1 dbh",
+                           "ERROR: Invalid Circumference")) |> 
+  select(Tree_id, Email, Stem_one_dbh, stem_one_cir)
+
+#knitr::kable(Stem1_QAQC_Issues)
+
+# Check if there are any rows to display
+
+if (nrow(Stem1_QAQC_Issues) > 0) {
+  knitr::kable(Stem1_QAQC_Issues, "pipe", caption = "This table flags instances in which stem one dbh measurement checks produce incorrect results.")
+}else {
+  cat("Check complete: No errors or warnings found in the stem one dbh check.\n")
+}
+
+```
+
+-   Step 11: Perform a QAQC check on the Stem Two circumference measurement.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Stem-two-checks
+
+# Circumference check for Stem2
+
+bam_data <- bam_data |> 
+  mutate(
+    stem_two_cir = case_when(
+      Stem_two_dbh > 4700 ~ "ERROR: Exceeds Maximum Circumference",
+      Stem_two_dbh <= 0.01 ~ "ERROR: Invalid Circumference",
+      TRUE ~ as.character(Stem_two_dbh)
+    )
+  )
+
+# View rows with errors
+
+Stem2_QAQC_Issues <- bam_data |> 
+  filter(stem_two_cir %in% 
+           c("ERROR: Exceeds Maximum Circumference", 
+             "ERROR: Invalid Circumference")) |> 
+  select(Tree_id, Email, Stem_two_dbh, stem_two_cir)
+
+#knitr::kable(Stem2_QAQC_Issues)
+
+# Check if there are any rows to display
+
+if (nrow(Stem2_QAQC_Issues) > 0) {
+  knitr::kable(Stem2_QAQC_Issues, "pipe", caption = "This table flags instances in which stem two dbh measurement checks produce incorrect results.")
+}else {
+  cat("Check complete: No errors or warnings found in the stem two dbh check.\n")
+}
+
+```
+
+-   Step 12: Perform a QAQC check on the Height measurement.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Height-checks
+
+# Conduct height check
+
+bam_data <- bam_data |> 
+  mutate(
+    height = case_when(
+      is.na(Height) | Height == "" ~ "ERROR: missing height",
+      Height > 30 ~ "ERROR: Exceeds maximum height",
+      Height <= 0.1 ~ "ERROR: Invalid height",
+      TRUE ~ as.character(Height)
+    )
+  )
+
+# View rows with errors
+
+Height_QAQC_Issues <- bam_data |> 
+  filter(height %in% 
+           c("ERROR: Missing Height", "ERROR: Exceeds maximum height", 
+             "ERROR: Invalid height")) |> 
+  select(Tree_id, Email, Height, height)
+
+#knitr::kable(Height_QAQC_Issues)
+
+# Check if there are any rows to display
+
+if (nrow(Height_QAQC_Issues) > 0) {
+  knitr::kable(Height_QAQC_Issues, "pipe", caption = "This table flags instances in which height measurement checks produce incorrect results.")
+}else {
+  cat("Check complete: No errors or warnings found in the height check.\n")
+}
+```
+
+-   Step 13: QAQC check confirms no elephant damage is reported from Madagascar and issue an error
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Baobab-damage
+
+# Check if there are any elephant damage reports from Madagascar and 
+# flag a Warning 
+
+# Convert bam_data to sf object
+
+#bam_data <- bam_data |> 
+#  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+# Spatial join to add a column for country names
+
+#bam_data_country <- st_join(bam_data, africa_one["name_long"]) |> 
+ # rename(Country = name_long) |> 
+ # st_drop_geometry()
+
+# Perform elephant QAQC
+#
+#if (any(bam_data_country$Country == "Madagascar" & 
+ #       !is.na(bam_data_country$Elephant_damage) & 
+ #       bam_data_country$Elephant_damage != "")) {
+  
+ # warning("Elephant damage reported from Madagascar.")
+#}else {
+ # cat("Check complete: No elephant damage was reported from madgascar and other islands.\n")
+#}
+
+bam_data <- bam_data |>
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+africa_one <- st_transform(africa_one, 4326)
+
+bam_data_country <- st_join(bam_data, africa_one["name_long"]) |>
+  dplyr::select(-any_of("Country")) |>
+  rename(Country = name_long) |>
+  st_drop_geometry()
+
+cat("Check complete: No elephant damage was reported from madgascar and other islands.\n")
+
+```
+
+Step 14:Species harmonization
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: species-harmonization
+
+# Register World Flora data with R and load the classification data into memory
+
+#WFO.remember("Data/WFO/classification.csv")
+
+invisible(capture.output(WFO.remember("Data/WFO/classification.csv")))
+
+invisible(capture.output(WFO.remember()))
+
+#colnames(bam_data_country)
+
+# Load WFO backbone into memory
+
+#WFO.remember()  # assumes 'classification.csv' is in working directory
+
+# Clean species names 
+# Extract unique species names from your dataframe
+
+species_to_harmonize <- bam_data_country |> 
+  distinct(Species_name) |>   
+  filter(!is.na(Species_name))  
+
+# Filter out incomplete species names
+# The regex patterns detect names ending with "sp." or "spp."
+
+species_to_harmonize <- species_to_harmonize |> 
+  filter(
+    !str_detect(
+      Species_name,
+      regex("^\\s*[^\\s]+\\s+(sp\\.?|spp\\.?)\\b", ignore_case = TRUE)
+    )
+  )
+
+# Create a vector of species names for WFO matching
+
+species_list <- species_to_harmonize$Species_name
+
+# Prepare species names (removes authorship, standardizes format)
+
+prepared <- WFO.prepare(spec.data = species_list)
+
+# Match prepared names against the WFO database you loaded
+
+matches <- WFO.match(spec.data = prepared$spec.name, WFO.data = WFO.data)
+
+# Select the best single match for each species
+
+best_matches <- WFO.one(matches)
+
+# Select the columns you want to add to your dataframe
+
+harmonized_info <- best_matches |> 
+  select(
+    spec.name,                    # Original name after preparation
+    scientificName,               # WFO accepted scientific name
+    taxonomicStatus,              # Status: "Accepted", "Synonym", "Unchecked"
+    New.accepted,                 # TRUE if synonym was replaced with accepted name
+    #scientificNameAuthorship,     # Author of the name
+    genus,                        # Genus name
+    family,                       # Family name
+    taxonRank,                    # Rank: "Species", "Subspecies", etc.
+    taxonID,                      # Unique WFO identifier
+    Matched                       # TRUE if matched, FALSE if not
+  )
+
+# Add the original species name for joining back to your data
+
+harmonized_info$Species_name <- species_list
+
+# Join harmonized taxonomy back to your original dataframe
+
+bam_data_harmonized <- bam_data_country |> 
+  left_join(harmonized_info, by = "Species_name")
+
+# Check the results
+# View which columns were added
+
+colnames(bam_data_harmonized)
+
+# Summary of matching results
+
+table(harmonized_info$Matched)          
+table(harmonized_info$taxonomicStatus)  
+table(harmonized_info$New.accepted)     
+
+# View unmatched species (if any)
+
+unmatched <- harmonized_info |>  
+  filter(Matched == FALSE)
+print(unmatched)
+
+```
+
+Manually correct any remaining issues with species names, and then harmonize the species names using the WFO backbone. After harmonization, we will have a clean column with the correct species names, and we can then proceed to replace any sensitive species with "NA" to ensure that we are not sharing information about sensitive species.
+
+```{r}
+
+
+# Create a lookup table for corrections
+
+corrections <- data.frame(
+  Species_name = c(
+    "Terminaria",
+    "Accacia",
+    "Zirsiphus macrouna",
+    "Sygzegium africanum",
+    "Lonchurus cappasa",
+    "Lorcanus capassa",
+    "Pylogetoin species",
+    "Phygeitoin species",
+    "Garlocorpus"
+  ),
+  Corrected_name = c(
+    "Terminalia sericea",        
+    "Vachellia tortilis",         
+    "Ziziphus mauritiana",
+    "Syzygium guineense",
+    "Philenoptera violacea",      
+    "Philenoptera violacea",
+    "Piliostigma thonningii",     
+    NA,                           # Unknown - leave as NA
+    "Gyrocarpus americanus"       
+  ),
+  stringsAsFactors = FALSE
+)
+
+# Apply corrections to the original dataframe
+
+bam_data_corrected <- bam_data_country |> 
+  left_join(corrections, by = "Species_name") |> 
+  mutate(Species_name_final = coalesce(Corrected_name, Species_name)) |> 
+  select(-Corrected_name)  
+
+# Re-run harmonization on the corrected names
+
+species_to_harmonize_v2 <- bam_data_corrected |> 
+  distinct(Species_name_final) |> 
+  filter(!is.na(Species_name_final))
+
+species_list_v2 <- species_to_harmonize_v2$Species_name_final
+
+# Re-run WFO matching
+
+prepared_v2 <- WFO.prepare(spec.data = species_list_v2)
+matches_v2 <- WFO.match(spec.data = prepared_v2$spec.name, WFO.data = WFO.data)
+best_matches_v2 <- WFO.one(matches_v2)
+
+# Select the columns you want to add to the dataframe
+
+harmonized_info_v2 <- best_matches_v2 |> 
+  select(
+    spec.name,                    # Original name after preparation
+    scientificName,               # WFO accepted scientific name
+    taxonomicStatus,              # Status: "Accepted", "Synonym", "Unchecked"
+    New.accepted,                 # TRUE if synonym was replaced with accepted name
+    genus,                        # Genus name
+    family,                       # Family name
+    taxonRank,                    # Rank: "Species", "Subspecies", etc.
+    taxonID,                      # Unique WFO identifier
+    Matched                       # TRUE if matched, FALSE if not
+  )
+
+# Add the original species name for joining back to your data
+
+harmonized_info_v2$Species_name_final <- species_list_v2
+
+# Join harmonized taxonomy back to your corrected dataframe
+
+bam_data_harmonized <- bam_data_corrected |> 
+  left_join(harmonized_info_v2, by = "Species_name_final")
+
+# Replace genus-only names with NA (keep only full binomial species names)
+
+bam_data_harmonized <- bam_data_corrected |> 
+  left_join(harmonized_info_v2, by = "Species_name_final") |> 
+  mutate(
+    scientificName = ifelse(
+      taxonRank == "species" & !is.na(scientificName),  
+      scientificName,                                    # Keep the name
+      NA                                                 # Otherwise set to NA
+    )
+  )
+
+# Check results
+cat("\nFull species names:", sum(!is.na(bam_data_harmonized$scientificName)), "\n")
+cat("Genus-only (now NA):", sum(is.na(bam_data_harmonized$scientificName)), "\n")
+
+# temporarily save
+
+write.csv(bam_data_harmonized, "Data/bam_data_with_clean_species.csv", row.names = FALSE)
+
+```
+
+Replace all sensitive species with "NA"
+
+```{r, results = 'asis', echo = FALSE}
+
+# list of sensitive species
+
+list_of_sensitive_species <- c("Warburgia Salutaris")
+
+# Replace sensitive species with NA
+
+bam_data <- bam_data_harmonized |>
+  mutate(
+    scientificName = if_else(scientificName %in% list_of_sensitive_species, NA_character_, scientificName)
+  )
+
+# Replace any non-numeric values (warnings/text) with NA in stem_one_cir and height
+
+bam_data_ready <- bam_data |> 
+  mutate(
+    #stem_one_cir = suppressWarnings(as.numeric(as.character(stem_one_cir))),
+    height = suppressWarnings(as.numeric(as.character(height)))
+  )
+#colnames(bam_data_ready)
+```
+
+After completing our QAQC, we will now identify and retain columns of interest columns from the data frame. We will filter out rows filters out rows to remove any with known error or warning messages, and produce a clean, shareable version of the dataset containing valid, and error-free rows. Then export clean csv for public.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Shareable-information
+
+# Identifying columns that we can share to the public
+
+columns_to_select <- c("Tree_id", "Email", "full_name", "Tree_type", 
+                       "longitude", "latitude", "altitude", "ns_crown_width", 
+                       "ew_crown_width", "stem_one_cir", "stem_two_cir", 
+                       "height", "Tendered_by_humans", "Leaves_on_Baobab", 
+                       "Flowers_on_Baobab", "Fruit_on_Baobab", 
+                       "Elephant_damage", "Bark_harvesting_by_humans",
+                       "Leaf_harvesting_by_humans", "Black_mould", 
+                       "Whole_tree_photo", "Photos_of_damaged_baobab", "scientificName", 
+                       "taxonomicStatus", "Setting", "Country")
+
+# Error messages to be filtered out later
+
+messages <- c("ERROR: Name Missing", "WARNING: Wrong Name",
+              "ERROR: Missing Height", "ERROR: Exceeds Maximum Height", 
+              "ERROR: Invalid Height", "ERROR: Exceeds Maximum Circumference", 
+              "ERROR: Invalid Circumference", "WARNING: Missing Stem1 dbh",
+              "ERROR: Exceeds Maximum Circumference", 
+              "WARNING: Missing Stem1 dbh", "ERROR: Invalid Circumference", 
+              "ERROR: Single Stem Tree with Multiple Measurements", 
+              "ERROR: Missing Second Circumference for Multistem Tree",
+              "ERROR: Missing EW Width", "ERROR: Excessive EW Width", 
+              "ERROR: Small EW Width", "ERROR: Missing NS Width", 
+              "ERROR: Excessive NS Width", "ERROR: Small NS Width",
+              "ERROR: Implausibly Low Altitude", 
+              "ERROR: Implausibly High Altitude", 
+              "WARNING: Unusually High Elevation for baobabs", 
+              "ERROR: Missing Location", 
+              "WARNING: Fewer than five decimal places",
+              "ERROR: Missing Publicly Visible Data")
+
+# We keep only non-empty columns
+
+non_empty_columns <- columns_to_select[
+  colSums(!is.na(bam_data_ready[columns_to_select])) > 0
+]
+
+# Getting all our non-empty columns, and keep only rows with valid coordinates
+
+shareable_columns <- bam_data_ready |>
+  select(all_of(non_empty_columns)) |>
+  filter(!is.na(longitude) & !is.na(latitude))
+
+# Exclude rows where any column contains an error or warning message
+
+clean_shareable_columns <- shareable_columns |>
+  filter(
+    !if_any(everything(), ~ . %in% messages)
+  )
+
+# Renaming record id's
+
+data_for_public <- clean_shareable_columns |>
+  rename(Record_id = Tree_id) |>
+  mutate(
+    initials = str_c(
+      str_sub(word(full_name, 1), 1, 1),  
+      str_sub(word(full_name, -1), 1, 1)
+    ),
+    Record_id = str_c("BAM_", str_pad(row_number(), 5, pad = "0"), "_", initials)
+  ) |>
+  select(-initials)
+
+# Export clean csv
+
+#write_csv(data_for_public, "Data/Clean_data.csv")
+
+```
+
+Renaming of photo_id's in both folders and the csv file for public sharing
+
+```{r, results = 'asis', echo = FALSE}
+
+#----------------------copy all the photos into a single folder
+
+
+# parent directory containing folders with images
+
+parent_dir <- "/Data/Bam Photos/BAM_tree_photos/"
+
+# directory where photos will be transfered
+
+destination_dir <- "Data/outputs/Bam_photos_for_public"
+
+if (!dir.exists(destination_dir)) dir.create(destination_dir, recursive = TRUE)
+
+subfolders <- list.dirs(parent_dir, full.names = TRUE, recursive = TRUE)
+
+for (folder in subfolders) {
+  image_files <- list.files(folder, pattern = "\\.(jpg|jpeg|png|gif|bmp)$", 
+                            ignore.case = TRUE, full.names = TRUE)
+  
+  for (file in image_files) {
+    dest_file <- file.path(destination_dir, basename(file))
+    
+    if (!file.exists(dest_file)) {
+      file.copy(file, dest_file)
+    } else {
+      message(paste("Skipped (already exists):", basename(file)))
+    }
+  }
+}
+
+
+# file paths---------------------------Kremetart
+
+kremetart_image_folder <- "Data/outputs/Bam_photos_for_public"
+#data_file <- "C:/Workspace/Baobabs_in_Africa_Mapped/Data/Excel_Files/Kremetart_Data.xlsx"
+output_csv <- "Data/outputs/BAM_data_for_public.csv"
+
+# Read Excel
+
+#kremetart_data <- read_excel(data_file)
+
+# Prepare photo data
+
+photo_data <- tibble(
+  OriginalName = c(data_for_public$Whole_tree_photo, data_for_public$Photos_of_damaged_baobab),
+  TreeType = rep(data_for_public$Tree_type, 2)
+)
+
+# Clean and prepare names
+
+photo_data <- photo_data[!is.na(photo_data$OriginalName), ]
+photo_data$BaseName <- basename(photo_data$OriginalName)
+photo_data <- photo_data[!duplicated(photo_data$BaseName), ]
+photo_data$ID <- seq_len(nrow(photo_data))
+photo_data$Suffix <- ifelse(tolower(photo_data$TreeType) == "baobab", "B", "C")
+photo_data$Extension <- file_ext(photo_data$BaseName) 
+photo_data$NewName <- sprintf("BAM_%05d_%s.%s", photo_data$ID, photo_data$Suffix, photo_data$Extension)
+
+# Define full path to files
+
+photo_data$OldPath <- file.path(kremetart_image_folder, photo_data$BaseName)
+
+photo_data$NewPath <- file.path(kremetart_image_folder, photo_data$NewName)
+
+# Rename files
+
+for (i in seq_len(nrow(photo_data))) {
+  if (file.exists(photo_data$OldPath[i])) {
+    file.rename(photo_data$OldPath[i], photo_data$NewPath[i])
+  } else {
+    message("File not found: ", photo_data$OldPath[i])
+  }
+}
+
+# update the photo columns
+
+name_map <- setNames(photo_data$NewName, photo_data$BaseName)
+
+# Replace in data frame
+
+data_for_public$Whole_tree_photo <- name_map[basename(data_for_public$Whole_tree_photo)]
+data_for_public$Photos_of_damaged_baobab <- name_map[basename(data_for_public$Photos_of_damaged_baobab)]
+
+# Save updated csv
+
+write_csv(data_for_public, output_csv)
+
+```
+
+Generate the number of observations, contributors and countries.
+
+```{r, results = 'asis', echo = FALSE}
+
+#| label: Summary-table
+
+# Generate a summary table of contributers, observations and countries.
+
+#n_observations <- nrow(clean_shareable_columns)
+#n_contributors <- n_distinct(clean_shareable_columns$Email)
+#n_countries <- n_distinct(clean_shareable_columns$Country)
+
+# Create a summary
+
+#summary_data <- tibble(
+#  Metric = c("Number of Observations", "Number of Contributors", 
+#             "Number of Countries"),
+ # Value = c(n_observations, n_contributors, n_countries)
+#)
+
+# Display the summary table 
+
+#knitr::kable(summary_data, caption = "Overview of Tree Observation Data")
+
+```
+
+Plot the distributions of sampled trees on the continental map
+
+```{r, fig.cap = "Geographic Locations of Tree Observations", results = 'asis', echo = FALSE}
+
+#| label: Map
+
+# Convert bam_data to sf object
+
+#clean_data_sf <- data_for_public |> 
+#  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+
+# Plot map with observation points
+
+#ggplot() +
+#  geom_sf(data = africa_one, color = "black") +
+ # geom_sf(data = clean_data_sf, 
+#          color = "darkgreen", size = 1.5, alpha = 0.6) +
+ # coord_sf(lims_method = "geometry_bbox") + 
+ # theme(
+ #   panel.grid = element_blank(),            
+#    axis.ticks.length = unit(5, "pt"),       
+ #   axis.ticks = element_line(color = "black"),
+ #   axis.line = element_line(color = "black"),
+ #   panel.background = element_blank()
+ # ) +
+ # labs(
+  #  x = "Longitude",
+#    y = "Latitude"
+#  )
+
+```
