@@ -37,7 +37,6 @@ The analysis is managed as a targets pipeline. Execution order is declared [Targ
 | File | Description |
 |------|-------------|
 | *BAM_data_for_public.csv* | Cleaned dataset for public release. |
-| *classification.csv* | World Flora Organaisation database used for species name matching. |
 
 ---
 
