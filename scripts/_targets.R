@@ -5,8 +5,8 @@
 
 # The file has three jobs, in this order:
 #   1. Load the packages the pipeline itself needs.
-#   2. Set global options, including the packages your CODE needs.
-#   3. Return a LIST of targets. That list is the pipeline.
+#   2. Set required packages the codes needs.
+#   3. Lists targets. That list is the pipeline.
 
 # Important: Do not run this script, but only run tar_make() in the console, and 
 # targets reads this file.
