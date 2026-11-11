@@ -1,8 +1,8 @@
-# A dataset of baobab trees and their comparators from across Africa
+# Georeferenced individual tree-level physical traits and condition observations of African baobabs and comparator trees.
 
-This repository contains the data and code used to reproduce the Quality Assurance and Quality Control Checks (QAQC) procedures, analyses and figures presented in:
+This respository contains the data and code used to process and analyse community-contributed Baobab in Africa Mapped (BAM) dataset. It provides the resources needed to reproduce the quality control checks (QAQC) procedures, the figures, and tables presented in the following publication: 
 
-> Chafika Phiri, Andrew M. Cunliffe, Sarah Venter, Aisha T. Bello, Alan D. Nare, Adler Santana Medeiros, Dawn Cory-Toussaint, Dave Hodgson, Kenneth F. Egbadzor, Lena Grieger, Nicholas Bii, Okopi Ade, & Tapiwa Gumbo. (Year). *Paper title*. Journal. DOI: https://doi.org/...
+> Chafika Phiri, Andrew M. Cunliffe, Sarah Venter, Okopi Ade, Aisha T. Bello, Nicholas Bii, Dawn Cory-Toussaint, Francis Chitsa, Kenneth F. Egbadzor, Tapiwa Gumbo, Lena Grieger, Dave Hodgson, Michelle Hurley, Steven Khosa, Justice Muvengwi, Alan D. Nare, Adler Santana Medeiros. (Year). *Paper title*. Journal. DOI: https://doi.org/...
 
 A permanent version of this repository is archived at [![DOI](https://zenodo.org/badge/DOI/...svg)](...)
 
@@ -14,23 +14,21 @@ Contact Chafika Phiri at Email: cp844@exeter.ac.uk
 
 ## Project overview
 
-Provide a brief overview of the project (approximately 2–4 sentences), including the research question or objective, the study system or data, and the purpose of the repository.
+The Baobab in Africa Mapped (BAM) project aims to create an open-source, community-contributed dataset on the distribution and condition of African baobab trees. This dataset provides a valuable foundation for geospatial investigations of baobab distribution and condition, enabling assessments of their responses to environmental drivers, comparisons with co-occurring species, and evaluations of conservation effectiveness. Furthermore, it contributes to improving the representation of African landscapes within openly accessible ecological datasets. The dataset is harmonised, quality checked, and made available for public use.
 
 ---
 
 ## Repository contents
 
-The analysis is managed as a targets pipeline. Execution order is declared [Targets](https://books.ropensci.org/targets/)) and resolved automatically, so scripts are not numbered.
-
 ### Scripts
 
 | Script | Description |
 |---------|-------------|
-| *_targets.R* | States each step and its dependencies. |
-| *functions.R* | Helper functions called during data prepartion. |
-| *Convert_Degrees_to_Decimal.R* | Conversion of coordinates from degrees–minutes–seconds to decimal degrees. |
-| *QAQC_BAM_Data.qmd* | Performs all quality assurance and quality control checks, and writes the shareable dataset. |
-| *Summary_Report_BAM.qmd* | Produces summary statistics, distribution maps and figures. |
+| *harmonise_tree_data.R* | Reads individual contributor files and harmonises their column names and variables against the BAM variable dictionary. |
+| *TRY_cross_check.R* | Identifies potential duplicate records by cross-referencing all *Adansonia* observations in the TRY database (Version 7) against the harmonised BAM baobab records. |
+| *QAQC_BAM_Data.qmd* | Performs comprehensive quality assurance and quality control (QA/QC) checks and generates the final, shareable dataset. |
+| *Summary_Report_BAM.qmd* | Generates summary statistics, spatial distribution maps, and visualisations to provide an overview of the BAM datase. |
+| *environmental_covariates.R* | Extracts environmental covariates for every unique baobab location, including climate, soil, topography, and protected-area status. |
 
 ### Data
 
@@ -42,24 +40,27 @@ The analysis is managed as a targets pipeline. Execution order is declared [Targ
 
 ## Acknowledgements
 
-We gratefully acknowledge financial support from Few and Far Collection within the Oppenheimer Programme in African Landscape Systems (OPALS) (https://opals-exeter.org/), which enabled Chafika Phiri's research.
+We gratefully acknowledge financial support from Few and Far Collection within the Oppenheimer Programme in African Landscape Systems (OPALS) (https://opals-exeter.org/), which made this research possible. We sincerely thank landowners at Kremetart, Bahiti, ZZ2, Francois Pauer, South African National Parks (SANParks) and all their neighbours for granting permission to conduct fieldwork on their properties. 
 
 ## Getting started
 
 Clone this repository and review the project overview and repository structure before running the analysis. 
 
 TESS Lab projects typically use [renv](https://rstudio.github.io/renv/) to record package dependencies and software versions. 
-Where an renv.lock file is included, restore the project environment before running any analyses:
+Where an renv.lock file is included, restore the project environment before running:
+
 ```r
 renv::restore()
 ```
 
 ## Running the analysis
 
-Unless otherwise stated, scripts should be run in numerical order:
+Scripts should be run in numerical order:
 
-1. *Convert_Degrees_to_Decimal.R* 
-2. *QAQC_BAM_Data.qmd*
-3. *Summary_Report_BAM.qmd* 
+1. *harmonise_tree_data.R* 
+2. *TRY_cross_check.R*
+3. *QAQC_BAM_Data.qmd*
+4. *Summary_Report_BAM.qmd*
+5. *environmental_covariates.R*
 
 ---
